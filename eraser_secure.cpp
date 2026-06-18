@@ -11,6 +11,14 @@
 #include <iomanip>
 #include <sodium.h>
 
+// Platform-specific includes
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 // Configuration constants
@@ -34,6 +42,13 @@ private:
     // Overwrite a file with cryptographically secure random data
     bool overwriteWithRandomData(const fs::path& filePath, int currentPass) {
         uintmax_t fileSize = fs::file_size(filePath);
+        
+        // Handle edge case of empty file
+        if (fileSize == 0) {
+            std::cout << "[*] Datei ist leer, überspringe Überschreibung\n";
+            return true;
+        }
+
         std::ofstream file(filePath, std::ios::binary);
         
         if (!file.is_open()) {
@@ -70,7 +85,7 @@ private:
         file.flush();
         file.close();
         
-        // Force OS to flush to disk on Windows
+        // Force OS to flush to disk
         #ifdef _WIN32
         HANDLE h = CreateFileA(filePath.string().c_str(), GENERIC_READ | GENERIC_WRITE,
                                FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
@@ -97,7 +112,7 @@ private:
         randombytes_buf(randomBytes, sizeof(randomBytes));
         
         std::string newName;
-        for (int i = 0; i < sizeof(randomBytes); i++) {
+        for (size_t i = 0; i < sizeof(randomBytes); i++) {
             char hex[3];
             snprintf(hex, sizeof(hex), "%02x", randomBytes[i]);
             newName += hex;
@@ -124,6 +139,11 @@ public:
     bool deleteFile(const fs::path& filePath) {
         if (!fs::exists(filePath)) {
             std::cerr << "[-] Datei nicht gefunden: " << filePath << "\n";
+            return false;
+        }
+
+        if (!fs::is_regular_file(filePath)) {
+            std::cerr << "[-] Ist keine reguläre Datei: " << filePath << "\n";
             return false;
         }
 
@@ -167,10 +187,15 @@ public:
         }
 
         std::vector<fs::path> files;
-        for (const auto& entry : fs::recursive_directory_iterator(dirPath)) {
-            if (fs::is_regular_file(entry.path())) {
-                files.push_back(entry.path());
+        try {
+            for (const auto& entry : fs::recursive_directory_iterator(dirPath)) {
+                if (fs::is_regular_file(entry.path())) {
+                    files.push_back(entry.path());
+                }
             }
+        } catch (const fs::filesystem_error& e) {
+            std::cerr << "[-] Fehler beim Durchsuchen des Verzeichnisses: " << e.what() << "\n";
+            return false;
         }
 
         if (files.empty()) {
@@ -245,7 +270,12 @@ int main(int argc, char* argv[]) {
             paranoid = true;
             passCount = SECURE_PASSES;
         } else if (arg == "--passes" && i + 1 < argc) {
-            passCount = std::stoi(argv[++i]);
+            try {
+                passCount = std::stoi(argv[++i]);
+            } catch (const std::exception& e) {
+                std::cerr << "[-] Fehler: Ungültige Pass-Anzahl: " << e.what() << "\n";
+                return 1;
+            }
         }
     }
 
